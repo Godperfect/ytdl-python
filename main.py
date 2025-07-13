@@ -74,6 +74,7 @@ async def download_media(
         'http_chunk_size': 2097152,  # 2MB chunks
         'youtube_include_dash_manifest': False,  # Skip DASH for speed
         'postprocessors': [],
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
 
     # Extract info asynchronously for faster response
@@ -160,6 +161,7 @@ async def view_media(
         'http_chunk_size': 2097152,
         'youtube_include_dash_manifest': False,
         'postprocessors': [],
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
 
     # Extract info asynchronously for faster response
@@ -261,6 +263,7 @@ async def get_video_info(url: str = Query(...)):
         'skip_download': True,
         'extract_flat': False,
         'socket_timeout': 10,
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
 
     loop = asyncio.get_event_loop()

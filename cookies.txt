@@ -1,0 +1,16 @@
+
+# Netscape HTTP Cookie File
+# This is a generated file! Do not edit.
+
+# Add your YouTube cookies here in Netscape format
+# Example format:
+# .youtube.com	TRUE	/	FALSE	1234567890	cookie_name	cookie_value
+
+# Instructions:
+# 1. Install Cookie Editor extension in your browser
+# 2. Go to youtube.com and login
+# 3. Open Cookie Editor extension
+# 4. Click "Export" and select "Netscape" format
+# 5. Copy the exported cookies and paste them below this line
+# 6. Make sure to replace this comment section with your actual cookies
+
