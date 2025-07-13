@@ -1,85 +1,150 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from yt_dlp import YoutubeDL
 import io
 import requests
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 app = FastAPI()
 
+# Global thread pool for non-blocking operations
+executor = ThreadPoolExecutor(max_workers=4)
+
+def extract_info_fast(url, ydl_opts):
+    """Extract video info in a separate thread for faster response"""
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to extract video info: {str(e)}")
+
 @app.get("/download")
-def download_media(
+async def download_media(
     url: str = Query(...),
     media_type: str = Query("video"),
     quality: str = Query("medium")
 ):
-    # Optimize format selection for speed
+    # Ultra-fast format selection for immediate streaming
     if media_type == 'audio':
         if quality == 'high':
-            format_selector = 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio'
+            format_selector = 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio'
         else:
-            format_selector = 'worstaudio[ext=m4a]/worstaudio[ext=mp3]/worstaudio'
+            format_selector = 'worstaudio[ext=m4a]/worstaudio[ext=webm]/worstaudio'
     else:
         if quality == 'high':
-            format_selector = 'best[height<=720][ext=mp4]/best[ext=mp4]/best'
+            format_selector = 'best[height<=720][ext=mp4]/best[height<=720]/best'
         elif quality == 'low':
-            format_selector = 'worst[height<=480][ext=mp4]/worst[ext=mp4]/worst'
+            format_selector = 'worst[height<=360][ext=mp4]/worst[height<=360]/worst'
         else:  # medium
-            format_selector = 'best[height<=480][ext=mp4]/best[ext=mp4]/best'
+            format_selector = 'best[height<=480][ext=mp4]/best[height<=480]/best'
 
     ydl_opts = {
         'format': format_selector,
         'noplaylist': True,
         'quiet': True,
-        'outtmpl': '-',
         'no_warnings': True,
         'extract_flat': False,
-        'force_generic_extractor': False,
+        'skip_download': True,
         'simulate': False,
-        'restrictfilenames': True,
-        'logtostderr': False,
-        'cachedir': False,
-        'socket_timeout': 30,
-        'retries': 3,
-        'fragment_retries': 3,
-        'http_chunk_size': 1048576,  # 1MB chunks for faster streaming
-        'postprocessors': [] if media_type == 'video' else [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '128' if quality == 'low' else '192',
-        }],
+        'socket_timeout': 15,  # Reduced timeout
+        'retries': 1,  # Faster failure recovery
+        'fragment_retries': 1,
+        'http_chunk_size': 2097152,  # 2MB chunks
+        'youtube_include_dash_manifest': False,  # Skip DASH for speed
+        'postprocessors': [],
     }
 
+    # Extract info asynchronously for faster response
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(executor, extract_info_fast, url, ydl_opts)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    if not result or 'url' not in result:
+        raise HTTPException(status_code=404, detail="Video URL not found")
+
     def stream():
-        with YoutubeDL(ydl_opts) as ydl:
-            result = ydl.extract_info(url, download=False)
-            if 'url' in result:
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': '*/*',
-                    'Accept-Encoding': 'identity',
-                    'Range': 'bytes=0-'
-                }
-                r = requests.get(result['url'], stream=True, headers=headers, timeout=30)
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': '*/*',
+                'Accept-Encoding': 'identity',
+                'Connection': 'keep-alive'
+            }
+            
+            with requests.get(result['url'], stream=True, headers=headers, timeout=20) as r:
                 r.raise_for_status()
                 
-                # Use larger chunks for faster streaming
-                for chunk in r.iter_content(chunk_size=65536):  # 64KB chunks
+                # Optimized chunk size for faster streaming
+                for chunk in r.iter_content(chunk_size=131072):  # 128KB chunks
                     if chunk:
                         yield chunk
+                        
+        except Exception as e:
+            yield f"Error: {str(e)}".encode()
 
-    content_type = 'audio/mpeg' if media_type == 'audio' else 'video/mp4'
-    return StreamingResponse(stream(), media_type=content_type)
+    # Determine content type more accurately
+    if media_type == 'audio':
+        content_type = 'audio/mpeg'
+        filename = f"audio.mp3"
+    else:
+        content_type = 'video/mp4'
+        filename = f"video.mp4"
+    
+    return StreamingResponse(
+        stream(), 
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+        }
+    )
+
+@app.get("/info")
+async def get_video_info(url: str = Query(...)):
+    """Get video metadata quickly for your Next.js frontend"""
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+        'extract_flat': False,
+        'socket_timeout': 10,
+    }
+    
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(executor, extract_info_fast, url, ydl_opts)
+        return {
+            "title": result.get('title', 'Unknown'),
+            "duration": result.get('duration', 0),
+            "thumbnail": result.get('thumbnail', ''),
+            "uploader": result.get('uploader', 'Unknown'),
+            "view_count": result.get('view_count', 0),
+            "formats_available": len(result.get('formats', [])),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/")
 def root():
     return {
-        "message": "YouTube Downloader API",
+        "message": "Ultra-Fast YouTube Downloader API for Next.js",
         "endpoints": [
-            "/download?url=<youtube_url>&media_type=video|audio&quality=low|medium|high"
+            "/download?url=<youtube_url>&media_type=video|audio&quality=low|medium|high",
+            "/info?url=<youtube_url> - Get video metadata quickly"
+        ],
+        "performance_tips": [
+            "Use quality=low for fastest downloads",
+            "Use /info endpoint to get metadata before downloading",
+            "API optimized for Next.js streaming"
         ],
         "examples": [
-            "/download?url=https://youtu.be/example&media_type=audio&quality=medium",
-            "/download?url=https://youtu.be/example&media_type=video&quality=low"
+            "/info?url=https://youtu.be/example",
+            "/download?url=https://youtu.be/example&media_type=audio&quality=low"
         ]
     }
 
