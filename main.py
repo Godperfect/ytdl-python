@@ -17,12 +17,21 @@ def download_media(
         temp_dir = tempfile.mkdtemp()
         
         ydl_opts = {
-            'format': 'bestaudio/best' if media_type == 'audio' else 'best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best[height<=720]' if media_type == 'audio' else 'best[height<=720]/best',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
             'restrictfilenames': True,
+            'cookiefile': None,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            },
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls']
+                }
+            },
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -83,6 +92,9 @@ def get_media_info(url: str = Query(...)):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            },
         }
         
         with YoutubeDL(ydl_opts) as ydl:
