@@ -99,7 +99,7 @@ def download_media(
                     url = f"https://www.youtube.com/embed/{video_id}"
                     ydl_opts['http_headers']['Referer'] = 'https://www.youtube.com/'
 
-        with YoutubeDL(ydl_opts) as ydl:
+            with YoutubeDL(ydl_opts) as ydl:
                 # Extract info first
                 info = ydl.extract_info(url, download=False)
                 title = info.get('title', 'Unknown')
