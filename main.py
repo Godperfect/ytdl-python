@@ -231,6 +231,13 @@ async def download_media(
 
     content_type = 'audio/mpeg' if media_type == 'audio' else 'video/mp4'
     
+    # Create a proper filename for download
+    title = result.get('title', 'video')
+    # Clean title for filename (remove invalid characters)
+    safe_title = re.sub(r'[<>:"/\\|?*]', '', title)[:50]  # Limit length
+    file_extension = '.mp3' if media_type == 'audio' else '.mp4'
+    filename = f"{safe_title}{file_extension}"
+    
     return StreamingResponse(
         stream(), 
         media_type=content_type,
@@ -238,6 +245,7 @@ async def download_media(
             "Accept-Ranges": "bytes",
             "Cache-Control": "public, max-age=3600",
             "Connection": "keep-alive",
+            "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Cache-Status": "HIT" if cached_result else "MISS"
         }
     )
