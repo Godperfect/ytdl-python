@@ -1,5 +1,9 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from yt_dlp import YoutubeDL
+import os
+import tempfile
+import io
 
 app = FastAPI()
 
@@ -8,41 +12,104 @@ def download_media(
     url: str = Query(...),
     media_type: str = Query("video")
 ):
-    ydl_opts = {
-        'format': 'bestaudio/best' if media_type == 'audio' else 'best',
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': False,
-        'force_generic_extractor': False,
-        'simulate': False,
-        'restrictfilenames': True,
-        'logtostderr': False,
-        'cachedir': False,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }] if media_type == 'audio' else [],
-    }
+    try:
+        # Create a temporary directory for downloads
+        temp_dir = tempfile.mkdtemp()
+        
+        ydl_opts = {
+            'format': 'bestaudio/best' if media_type == 'audio' else 'best',
+            'noplaylist': True,
+            'quiet': True,
+            'no_warnings': True,
+            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+            'restrictfilenames': True,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }] if media_type == 'audio' else [],
+        }
 
-    with YoutubeDL(ydl_opts) as ydl:
-        result = ydl.extract_info(url, download=False)
+        with YoutubeDL(ydl_opts) as ydl:
+            # Extract info first
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'Unknown')
+            duration = info.get('duration', 0)
+            uploader = info.get('uploader', 'Unknown')
+            
+            # Now download the file
+            ydl.download([url])
+            
+            # Find the downloaded file
+            files = os.listdir(temp_dir)
+            if not files:
+                raise HTTPException(status_code=500, detail="Download failed")
+            
+            downloaded_file = os.path.join(temp_dir, files[0])
+            
+            # Determine content type and filename
+            if media_type == 'audio':
+                content_type = 'audio/mpeg'
+                filename = f"{title}.mp3"
+            else:
+                content_type = 'video/mp4'
+                filename = f"{title}.mp4"
+            
+            # Read file into memory
+            with open(downloaded_file, 'rb') as f:
+                file_content = f.read()
+            
+            # Clean up temp file
+            os.remove(downloaded_file)
+            os.rmdir(temp_dir)
+            
+            # Return streaming response
+            return StreamingResponse(
+                io.BytesIO(file_content),
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename=\"{filename}\"",
+                    "Content-Length": str(len(file_content))
+                }
+            )
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading: {str(e)}")
 
-        if 'url' in result:
+@app.get("/info")
+def get_media_info(url: str = Query(...)):
+    """Get media information without downloading"""
+    try:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
             return {
-                "direct_url": result['url'],
-                "title": result.get('title', 'Unknown'),
-                "duration": result.get('duration', 0),
-                "uploader": result.get('uploader', 'Unknown'),
-                "media_type": media_type
+                "title": info.get('title', 'Unknown'),
+                "duration": info.get('duration', 0),
+                "uploader": info.get('uploader', 'Unknown'),
+                "description": info.get('description', ''),
+                "view_count": info.get('view_count', 0),
+                "upload_date": info.get('upload_date', ''),
+                "thumbnail": info.get('thumbnail', ''),
+                "formats_available": len(info.get('formats', []))
             }
-        else:
-            return {"error": "Could not extract video URL"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error extracting info: {str(e)}")
 
 @app.get("/")
 def root():
-    return {"message": "YouTube Downloader API", "endpoints": ["/download?url=<youtube_url>&media_type=video|audio"]}
+    return {
+        "message": "YouTube Downloader API", 
+        "endpoints": [
+            "/download?url=<youtube_url>&media_type=video|audio - Download media file",
+            "/info?url=<youtube_url> - Get media information"
+        ]
+    }
 
 if __name__ == "__main__":
     import uvicorn
