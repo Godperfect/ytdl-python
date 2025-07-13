@@ -1,12 +1,14 @@
+
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import StreamingResponse
 from yt_dlp import YoutubeDL
 import os
 import tempfile
-import io
 import random
 import time
 from fake_useragent import UserAgent
+import requests
+from urllib.parse import urlparse
 
 app = FastAPI()
 
@@ -14,145 +16,217 @@ def get_bypass_config():
     """Get configuration with multiple bypass techniques"""
     ua = UserAgent()
     
-    # List of working proxies (you can add free proxy services)
-    proxies = [
-        None,  # No proxy as fallback
-        # Add working proxies here if available
-    ]
-    
     return {
         'user_agent': ua.random,
-        'proxy': random.choice(proxies),
-        'delay': random.uniform(1, 3)
+        'delay': random.uniform(0.5, 2)
     }
 
-@app.get("/download")
-def download_media(
-    url: str = Query(...),
-    media_type: str = Query("video")
-):
-    # Try multiple bypass methods
+def get_stream_url(url, media_type):
+    """Extract direct stream URL from video URL"""
+    config = get_bypass_config()
+    time.sleep(config['delay'])
+    
+    # Try multiple extraction methods
     methods = [
-        {'name': 'standard', 'config': get_bypass_config()},
-        {'name': 'mobile', 'config': get_bypass_config()},
-        {'name': 'embedded', 'config': get_bypass_config()}
+        {
+            'name': 'android_client',
+            'client': 'android',
+            'format': 'bestaudio[ext=m4a]/bestaudio/worst[height<=480]' if media_type == 'audio' else 'best[height<=720]/worst[height<=480]'
+        },
+        {
+            'name': 'ios_client', 
+            'client': 'ios',
+            'format': 'bestaudio/worst[height<=360]' if media_type == 'audio' else 'best[height<=480]/worst[height<=360]'
+        },
+        {
+            'name': 'web_client',
+            'client': 'web',
+            'format': 'bestaudio[ext=webm]/bestaudio/worst' if media_type == 'audio' else 'worst[height<=360]/best'
+        }
     ]
     
     for method in methods:
         try:
-            temp_dir = tempfile.mkdtemp()
-            config = method['config']
-            
-            # Add delay to avoid rate limiting
-            time.sleep(config['delay'])
-            
             ydl_opts = {
-                'format': 'worst[height<=360]/bestaudio[ext=m4a]/bestaudio' if media_type == 'audio' else 'worst[height<=360]/best',
+                'format': method['format'],
                 'noplaylist': True,
                 'quiet': True,
                 'no_warnings': True,
-                'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-                'restrictfilenames': True,
                 'no_check_certificate': True,
                 'ignoreerrors': True,
                 'http_headers': {
                     'User-Agent': config['user_agent'],
                     'Accept': '*/*',
                     'Accept-Language': 'en-US,en;q=0.9',
-                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Accept-Encoding': 'gzip, deflate',
                     'DNT': '1',
                     'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Cache-Control': 'max-age=0',
                 },
                 'extractor_args': {
                     'youtube': {
-                        'skip': ['dash', 'hls'] if method['name'] == 'standard' else [],
-                        'player_skip': ['configs'],
-                        'player_client': ['android', 'web'] if method['name'] == 'mobile' else ['web'],
+                        'player_client': [method['client']],
+                        'skip': ['dash', 'hls'] if method['name'] == 'web_client' else [],
+                        'player_skip': ['js', 'configs'] if method['client'] != 'web' else []
                     }
                 },
                 'geo_bypass': True,
-                'geo_bypass_country': 'US',
                 'age_limit': None,
-                'sleep_interval': 1,
-                'max_sleep_interval': 3,
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '128',
-                }] if media_type == 'audio' else [],
             }
             
-            # Add proxy if available
-            if config['proxy']:
-                ydl_opts['proxy'] = config['proxy']
-            
-            # Special handling for embedded method
-            if method['name'] == 'embedded':
-                # Try to extract from embedded player
-                if 'youtu.be/' in url or 'youtube.com/watch' in url:
-                    video_id = url.split('/')[-1].split('?')[0] if 'youtu.be/' in url else url.split('v=')[1].split('&')[0]
-                    url = f"https://www.youtube.com/embed/{video_id}"
-                    ydl_opts['http_headers']['Referer'] = 'https://www.youtube.com/'
-
             with YoutubeDL(ydl_opts) as ydl:
-                # Extract info first
                 info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'Unknown')
                 
-                # Now download the file
-                ydl.download([url])
-                
-                # Find the downloaded file
-                files = os.listdir(temp_dir)
-                if not files:
-                    continue  # Try next method
-                
-                downloaded_file = os.path.join(temp_dir, files[0])
-                
-                # Determine content type and filename
-                if media_type == 'audio':
-                    content_type = 'audio/mpeg'
-                    filename = f"{title}.mp3"
-                else:
-                    content_type = 'video/mp4'
-                    filename = f"{title}.mp4"
-                
-                # Read file into memory
-                with open(downloaded_file, 'rb') as f:
-                    file_content = f.read()
-                
-                # Clean up temp file
-                os.remove(downloaded_file)
-                os.rmdir(temp_dir)
-                
-                # Return streaming response
-                return StreamingResponse(
-                    io.BytesIO(file_content),
-                    media_type=content_type,
-                    headers={
-                        "Content-Disposition": f"attachment; filename=\"{filename}\"",
-                        "Content-Length": str(len(file_content))
+                if info and 'url' in info:
+                    return {
+                        'stream_url': info['url'],
+                        'title': info.get('title', 'Unknown'),
+                        'duration': info.get('duration', 0),
+                        'content_type': 'audio/mp4' if media_type == 'audio' else 'video/mp4'
                     }
-                )
                 
+                # If no direct URL, check formats
+                formats = info.get('formats', [])
+                if formats:
+                    # Filter formats based on media type
+                    if media_type == 'audio':
+                        audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
+                        if audio_formats:
+                            selected = audio_formats[0]
+                        else:
+                            selected = formats[0]
+                    else:
+                        video_formats = [f for f in formats if f.get('vcodec') != 'none']
+                        if video_formats:
+                            selected = sorted(video_formats, key=lambda x: x.get('height', 0))[0]
+                        else:
+                            selected = formats[0]
+                    
+                    if selected and 'url' in selected:
+                        return {
+                            'stream_url': selected['url'],
+                            'title': info.get('title', 'Unknown'),
+                            'duration': info.get('duration', 0),
+                            'content_type': selected.get('ext', 'mp4')
+                        }
+                        
         except Exception as e:
-            # Clean up and try next method
-            try:
-                if os.path.exists(temp_dir):
-                    for file in os.listdir(temp_dir):
-                        os.remove(os.path.join(temp_dir, file))
-                    os.rmdir(temp_dir)
-            except:
-                pass
+            print(f"Method {method['name']} failed: {str(e)}")
             continue
     
-    # If all methods failed
-    raise HTTPException(status_code=500, detail="All bypass methods failed. Video may be region-locked or require authentication.")
+    return None
+
+def stream_from_url(stream_url, content_type):
+    """Stream content from URL with proper headers"""
+    ua = UserAgent()
+    headers = {
+        'User-Agent': ua.random,
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'identity',
+        'Range': 'bytes=0-',
+        'Connection': 'keep-alive',
+    }
+    
+    try:
+        response = requests.get(stream_url, headers=headers, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        def generate():
+            try:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        yield chunk
+            except Exception as e:
+                print(f"Streaming error: {e}")
+            finally:
+                response.close()
+        
+        return generate()
+    except Exception as e:
+        print(f"Stream request failed: {e}")
+        return None
+
+@app.get("/download")
+def download_media(
+    url: str = Query(...),
+    media_type: str = Query("video")
+):
+    try:
+        # Get stream URL
+        stream_info = get_stream_url(url, media_type)
+        
+        if not stream_info:
+            raise HTTPException(status_code=500, detail="Could not extract stream URL. Video may be restricted or unavailable.")
+        
+        # Get streaming generator
+        stream_generator = stream_from_url(stream_info['stream_url'], stream_info['content_type'])
+        
+        if not stream_generator:
+            raise HTTPException(status_code=500, detail="Could not establish stream connection.")
+        
+        # Determine content type and filename
+        if media_type == 'audio':
+            content_type = 'audio/mp4'
+            filename = f"{stream_info['title']}.m4a"
+        else:
+            content_type = 'video/mp4'
+            filename = f"{stream_info['title']}.mp4"
+        
+        # Return streaming response
+        return StreamingResponse(
+            stream_generator,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{filename}\"",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Streaming failed: {str(e)}")
+
+@app.get("/stream")
+def stream_media(
+    url: str = Query(...),
+    media_type: str = Query("video")
+):
+    """Stream media directly without download headers"""
+    try:
+        # Get stream URL
+        stream_info = get_stream_url(url, media_type)
+        
+        if not stream_info:
+            raise HTTPException(status_code=500, detail="Could not extract stream URL. Video may be restricted or unavailable.")
+        
+        # Get streaming generator
+        stream_generator = stream_from_url(stream_info['stream_url'], stream_info['content_type'])
+        
+        if not stream_generator:
+            raise HTTPException(status_code=500, detail="Could not establish stream connection.")
+        
+        # Determine content type
+        if media_type == 'audio':
+            content_type = 'audio/mp4'
+        else:
+            content_type = 'video/mp4'
+        
+        # Return streaming response for direct playback
+        return StreamingResponse(
+            stream_generator,
+            media_type=content_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Streaming failed: {str(e)}")
 
 @app.get("/info")
 def get_media_info(url: str = Query(...)):
@@ -182,9 +256,6 @@ def get_media_info(url: str = Query(...)):
             },
         }
         
-        if config['proxy']:
-            ydl_opts['proxy'] = config['proxy']
-        
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
@@ -204,9 +275,10 @@ def get_media_info(url: str = Query(...)):
 @app.get("/")
 def root():
     return {
-        "message": "YouTube Downloader API", 
+        "message": "YouTube Streaming API", 
         "endpoints": [
             "/download?url=<youtube_url>&media_type=video|audio - Download media file",
+            "/stream?url=<youtube_url>&media_type=video|audio - Stream media directly",
             "/info?url=<youtube_url> - Get media information"
         ]
     }
