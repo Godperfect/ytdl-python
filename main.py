@@ -66,7 +66,7 @@ async def download_media(
     if not result or 'url' not in result:
         raise HTTPException(status_code=404, detail="Video URL not found")
 
-    def stream(start=0, end=None):
+    def stream():
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -75,30 +75,13 @@ async def download_media(
                 'Connection': 'keep-alive'
             }
 
-            # Add range header if start position is specified
-            if start > 0 or end:
-                if end:
-                    headers['Range'] = f'bytes={start}-{end}'
-                else:
-                    headers['Range'] = f'bytes={start}-'
-
             with requests.get(result['url'], stream=True, headers=headers, timeout=20) as r:
                 r.raise_for_status()
 
-                # Skip bytes if range is not supported by source
-                if start > 0 and r.status_code != 206:
-                    bytes_to_skip = start
-                    for chunk in r.iter_content(chunk_size=131072):
-                        if bytes_to_skip <= 0:
-                            if chunk:
-                                yield chunk
-                        else:
-                            bytes_to_skip -= len(chunk)
-                else:
-                    # Normal streaming
-                    for chunk in r.iter_content(chunk_size=131072):
-                        if chunk:
-                            yield chunk
+                # Stream with optimized chunks for seeking
+                for chunk in r.iter_content(chunk_size=65536):  # 64KB chunks for better seeking
+                    if chunk:
+                        yield chunk
 
         except Exception as e:
             yield f"Error: {str(e)}".encode()
@@ -168,7 +151,7 @@ async def view_media(
     if not result or 'url' not in result:
         raise HTTPException(status_code=404, detail="Video URL not found")
 
-    def stream(start=0, end=None):
+    def stream():
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -177,30 +160,13 @@ async def view_media(
                 'Connection': 'keep-alive'
             }
 
-            # Add range header if start position is specified
-            if start > 0 or end:
-                if end:
-                    headers['Range'] = f'bytes={start}-{end}'
-                else:
-                    headers['Range'] = f'bytes={start}-'
-
             with requests.get(result['url'], stream=True, headers=headers, timeout=20) as r:
                 r.raise_for_status()
 
-                # Skip bytes if range is not supported by source
-                if start > 0 and r.status_code != 206:
-                    bytes_to_skip = start
-                    for chunk in r.iter_content(chunk_size=131072):
-                        if bytes_to_skip <= 0:
-                            if chunk:
-                                yield chunk
-                        else:
-                            bytes_to_skip -= len(chunk)
-                else:
-                    # Normal streaming
-                    for chunk in r.iter_content(chunk_size=131072):
-                        if chunk:
-                            yield chunk
+                # Stream with optimized chunks for seeking
+                for chunk in r.iter_content(chunk_size=65536):  # 64KB chunks for better seeking
+                    if chunk:
+                        yield chunk
 
         except Exception as e:
             yield f"Error: {str(e)}".encode()
