@@ -62,11 +62,11 @@ async def download_media(
         result = await loop.run_in_executor(executor, extract_info_fast, url, ydl_opts)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
     if not result or 'url' not in result:
         raise HTTPException(status_code=404, detail="Video URL not found")
 
-    def stream():
+    def stream(start=0, end=None):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -74,15 +74,32 @@ async def download_media(
                 'Accept-Encoding': 'identity',
                 'Connection': 'keep-alive'
             }
-            
+
+            # Add range header if start position is specified
+            if start > 0 or end:
+                if end:
+                    headers['Range'] = f'bytes={start}-{end}'
+                else:
+                    headers['Range'] = f'bytes={start}-'
+
             with requests.get(result['url'], stream=True, headers=headers, timeout=20) as r:
                 r.raise_for_status()
-                
-                # Optimized chunk size for faster streaming
-                for chunk in r.iter_content(chunk_size=131072):  # 128KB chunks
-                    if chunk:
-                        yield chunk
-                        
+
+                # Skip bytes if range is not supported by source
+                if start > 0 and r.status_code != 206:
+                    bytes_to_skip = start
+                    for chunk in r.iter_content(chunk_size=131072):
+                        if bytes_to_skip <= 0:
+                            if chunk:
+                                yield chunk
+                        else:
+                            bytes_to_skip -= len(chunk)
+                else:
+                    # Normal streaming
+                    for chunk in r.iter_content(chunk_size=131072):
+                        if chunk:
+                            yield chunk
+
         except Exception as e:
             yield f"Error: {str(e)}".encode()
 
@@ -93,7 +110,7 @@ async def download_media(
     else:
         content_type = 'video/mp4'
         filename = f"video.mp4"
-    
+
     return StreamingResponse(
         stream(), 
         media_type=content_type,
@@ -147,11 +164,11 @@ async def view_media(
         result = await loop.run_in_executor(executor, extract_info_fast, url, ydl_opts)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
     if not result or 'url' not in result:
         raise HTTPException(status_code=404, detail="Video URL not found")
 
-    def stream():
+    def stream(start=0, end=None):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -159,15 +176,32 @@ async def view_media(
                 'Accept-Encoding': 'identity',
                 'Connection': 'keep-alive'
             }
-            
+
+            # Add range header if start position is specified
+            if start > 0 or end:
+                if end:
+                    headers['Range'] = f'bytes={start}-{end}'
+                else:
+                    headers['Range'] = f'bytes={start}-'
+
             with requests.get(result['url'], stream=True, headers=headers, timeout=20) as r:
                 r.raise_for_status()
-                
-                # Optimized chunk size for faster streaming
-                for chunk in r.iter_content(chunk_size=131072):  # 128KB chunks
-                    if chunk:
-                        yield chunk
-                        
+
+                # Skip bytes if range is not supported by source
+                if start > 0 and r.status_code != 206:
+                    bytes_to_skip = start
+                    for chunk in r.iter_content(chunk_size=131072):
+                        if bytes_to_skip <= 0:
+                            if chunk:
+                                yield chunk
+                        else:
+                            bytes_to_skip -= len(chunk)
+                else:
+                    # Normal streaming
+                    for chunk in r.iter_content(chunk_size=131072):
+                        if chunk:
+                            yield chunk
+
         except Exception as e:
             yield f"Error: {str(e)}".encode()
 
@@ -176,7 +210,7 @@ async def view_media(
         content_type = 'audio/mpeg'
     else:
         content_type = 'video/mp4'
-    
+
     return StreamingResponse(
         stream(), 
         media_type=content_type,
@@ -200,7 +234,7 @@ async def get_video_info(url: str = Query(...)):
         'extract_flat': False,
         'socket_timeout': 10,
     }
-    
+
     loop = asyncio.get_event_loop()
     try:
         result = await loop.run_in_executor(executor, extract_info_fast, url, ydl_opts)
