@@ -98,11 +98,58 @@ async def download_media(
         stream(), 
         media_type=content_type,
         headers={
-            "Content-Disposition": f"attachment; filename={filename}",
-            "Cache-Control": "no-cache",
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600",
             "Connection": "keep-alive"
         }
     )
+
+@app.get("/stream")
+async def stream_media(
+    url: str = Query(...),
+    media_type: str = Query("video"),
+    quality: str = Query("medium")
+):
+    """Stream media directly for playback in your Next.js app"""
+    # Same format selection as download but optimized for streaming
+    if media_type == 'audio':
+        if quality == 'high':
+            format_selector = 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio'
+        else:
+            format_selector = 'worstaudio[ext=m4a]/worstaudio[ext=webm]/worstaudio'
+    else:
+        if quality == 'high':
+            format_selector = 'best[height<=720][ext=mp4]/best[height<=720]/best'
+        elif quality == 'low':
+            format_selector = 'worst[height<=360][ext=mp4]/worst[height<=360]/worst'
+        else:
+            format_selector = 'best[height<=480][ext=mp4]/best[height<=480]/best'
+
+    ydl_opts = {
+        'format': format_selector,
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 10,
+        'youtube_include_dash_manifest': False,
+    }
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(executor, extract_info_fast, url, ydl_opts)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    if not result or 'url' not in result:
+        raise HTTPException(status_code=404, detail="Video URL not found")
+
+    # Return the direct stream URL for your Next.js app to use
+    return {
+        "stream_url": result['url'],
+        "title": result.get('title', 'Unknown'),
+        "duration": result.get('duration', 0),
+        "thumbnail": result.get('thumbnail', ''),
+        "format": result.get('ext', 'mp4'),
+    }
 
 @app.get("/info")
 async def get_video_info(url: str = Query(...)):
@@ -132,17 +179,19 @@ async def get_video_info(url: str = Query(...)):
 @app.get("/")
 def root():
     return {
-        "message": "Ultra-Fast YouTube Downloader API for Next.js",
+        "message": "Ultra-Fast YouTube Streaming API for Next.js",
         "endpoints": [
-            "/download?url=<youtube_url>&media_type=video|audio&quality=low|medium|high",
+            "/stream?url=<youtube_url>&media_type=video|audio&quality=low|medium|high - Get direct stream URL",
+            "/download?url=<youtube_url>&media_type=video|audio&quality=low|medium|high - Download file",
             "/info?url=<youtube_url> - Get video metadata quickly"
         ],
         "performance_tips": [
-            "Use quality=low for fastest downloads",
-            "Use /info endpoint to get metadata before downloading",
-            "API optimized for Next.js streaming"
+            "Use /stream for direct playback in your Next.js app",
+            "Use quality=low for fastest streaming",
+            "Use /info endpoint to get metadata before streaming"
         ],
         "examples": [
+            "/stream?url=https://youtu.be/example&media_type=video&quality=medium",
             "/info?url=https://youtu.be/example",
             "/download?url=https://youtu.be/example&media_type=audio&quality=low"
         ]
