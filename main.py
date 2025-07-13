@@ -7,8 +7,27 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import re
+import random
 
 app = FastAPI()
+
+# Random User-Agent pool to avoid bot detection
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/122.0.0.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+]
+
+def get_random_user_agent():
+    """Return a random user agent to avoid bot detection"""
+    return random.choice(USER_AGENTS)
 
 # Global thread pool for non-blocking operations
 executor = ThreadPoolExecutor(max_workers=4)
@@ -70,7 +89,7 @@ async def download_media(
     def stream():
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': get_random_user_agent(),
                 'Accept': '*/*',
                 'Accept-Encoding': 'identity',
                 'Connection': 'keep-alive'
@@ -155,7 +174,7 @@ async def view_media(
 
     # Get file size first for Range requests
     head_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': get_random_user_agent(),
     }
     
     try:
@@ -179,7 +198,7 @@ async def view_media(
     def stream_with_range():
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': get_random_user_agent(),
                 'Accept': '*/*',
                 'Accept-Encoding': 'identity',
                 'Connection': 'keep-alive'
