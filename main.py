@@ -68,13 +68,12 @@ async def download_media(
         'extract_flat': False,
         'skip_download': True,
         'simulate': False,
-        'socket_timeout': 15,  # Reduced timeout
+        'socket_timeout': 10,  # Further reduced timeout
         'retries': 1,  # Faster failure recovery
         'fragment_retries': 1,
         'http_chunk_size': 2097152,  # 2MB chunks
         'youtube_include_dash_manifest': False,  # Skip DASH for speed
         'postprocessors': [],
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
 
     # Extract info asynchronously for faster response
@@ -155,13 +154,12 @@ async def view_media(
         'extract_flat': False,
         'skip_download': True,
         'simulate': False,
-        'socket_timeout': 15,
+        'socket_timeout': 10,
         'retries': 1,
         'fragment_retries': 1,
         'http_chunk_size': 2097152,
         'youtube_include_dash_manifest': False,
         'postprocessors': [],
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
 
     # Extract info asynchronously for faster response
@@ -262,8 +260,7 @@ async def get_video_info(url: str = Query(...)):
         'no_warnings': True,
         'skip_download': True,
         'extract_flat': False,
-        'socket_timeout': 10,
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
+        'socket_timeout': 8,
     }
 
     loop = asyncio.get_event_loop()
