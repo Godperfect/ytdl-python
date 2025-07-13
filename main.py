@@ -110,8 +110,8 @@ async def view_media(
     media_type: str = Query("video"),
     quality: str = Query("medium")
 ):
-    """Get media URL for viewing directly in your Next.js app"""
-    # Same format selection as download but optimized for streaming
+    """Stream media directly through yt-dlp for reliable playback in your Next.js app"""
+    # Ultra-fast format selection for immediate streaming
     if media_type == 'audio':
         if quality == 'high':
             format_selector = 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio'
@@ -122,17 +122,26 @@ async def view_media(
             format_selector = 'best[height<=720][ext=mp4]/best[height<=720]/best'
         elif quality == 'low':
             format_selector = 'worst[height<=360][ext=mp4]/worst[height<=360]/worst'
-        else:
+        else:  # medium
             format_selector = 'best[height<=480][ext=mp4]/best[height<=480]/best'
 
     ydl_opts = {
         'format': format_selector,
+        'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
-        'socket_timeout': 10,
+        'extract_flat': False,
+        'skip_download': True,
+        'simulate': False,
+        'socket_timeout': 15,
+        'retries': 1,
+        'fragment_retries': 1,
+        'http_chunk_size': 2097152,
         'youtube_include_dash_manifest': False,
+        'postprocessors': [],
     }
 
+    # Extract info asynchronously for faster response
     loop = asyncio.get_event_loop()
     try:
         result = await loop.run_in_executor(executor, extract_info_fast, url, ydl_opts)
@@ -142,14 +151,44 @@ async def view_media(
     if not result or 'url' not in result:
         raise HTTPException(status_code=404, detail="Video URL not found")
 
-    # Return the direct view URL for your Next.js app to use
-    return {
-        "view_url": result['url'],
-        "title": result.get('title', 'Unknown'),
-        "duration": result.get('duration', 0),
-        "thumbnail": result.get('thumbnail', ''),
-        "format": result.get('ext', 'mp4'),
-    }
+    def stream():
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': '*/*',
+                'Accept-Encoding': 'identity',
+                'Connection': 'keep-alive'
+            }
+            
+            with requests.get(result['url'], stream=True, headers=headers, timeout=20) as r:
+                r.raise_for_status()
+                
+                # Optimized chunk size for faster streaming
+                for chunk in r.iter_content(chunk_size=131072):  # 128KB chunks
+                    if chunk:
+                        yield chunk
+                        
+        except Exception as e:
+            yield f"Error: {str(e)}".encode()
+
+    # Determine content type more accurately
+    if media_type == 'audio':
+        content_type = 'audio/mpeg'
+    else:
+        content_type = 'video/mp4'
+    
+    return StreamingResponse(
+        stream(), 
+        media_type=content_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Range, Content-Type"
+        }
+    )
 
 @app.get("/info")
 async def get_video_info(url: str = Query(...)):
@@ -186,9 +225,9 @@ def root():
             "/info?url=<youtube_url> - Get video metadata quickly"
         ],
         "performance_tips": [
-            "Use /view for direct playback in your Next.js app",
-            "Use quality=low for fastest viewing",
-            "Use /info endpoint to get metadata before viewing"
+            "Use /view for reliable streaming through yt-dlp proxy",
+            "Use quality=low for fastest streaming",
+            "Use /info endpoint to get metadata before streaming"
         ],
         "examples": [
             "/view?url=https://youtu.be/example&media_type=video&quality=medium",
