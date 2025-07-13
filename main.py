@@ -1,11 +1,12 @@
-from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi.responses import StreamingResponse, Response
 from yt_dlp import YoutubeDL
 import io
 import requests
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import re
 
 app = FastAPI()
 
@@ -106,11 +107,12 @@ async def download_media(
 
 @app.get("/view")
 async def view_media(
+    request: Request,
     url: str = Query(...),
     media_type: str = Query("video"),
     quality: str = Query("medium")
 ):
-    """Stream media directly through yt-dlp for reliable playback in your Next.js app"""
+    """Stream media with Range request support for seeking in audio/video players"""
     # Ultra-fast format selection for immediate streaming
     if media_type == 'audio':
         if quality == 'high':
@@ -151,7 +153,30 @@ async def view_media(
     if not result or 'url' not in result:
         raise HTTPException(status_code=404, detail="Video URL not found")
 
-    def stream():
+    # Get file size first for Range requests
+    head_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    }
+    
+    try:
+        head_response = requests.head(result['url'], headers=head_headers, timeout=10)
+        file_size = int(head_response.headers.get('content-length', 0))
+    except:
+        file_size = 0
+
+    # Parse Range header if present
+    range_header = request.headers.get('range')
+    start = 0
+    end = file_size - 1 if file_size > 0 else None
+    
+    if range_header:
+        range_match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+        if range_match:
+            start = int(range_match.group(1))
+            if range_match.group(2):
+                end = int(range_match.group(2))
+
+    def stream_with_range():
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -159,12 +184,16 @@ async def view_media(
                 'Accept-Encoding': 'identity',
                 'Connection': 'keep-alive'
             }
+            
+            # Add Range header for seeking
+            if range_header and file_size > 0:
+                headers['Range'] = f'bytes={start}-{end}'
 
             with requests.get(result['url'], stream=True, headers=headers, timeout=20) as r:
                 r.raise_for_status()
 
                 # Stream with optimized chunks for seeking
-                for chunk in r.iter_content(chunk_size=65536):  # 64KB chunks for better seeking
+                for chunk in r.iter_content(chunk_size=32768):  # 32KB chunks for smooth seeking
                     if chunk:
                         yield chunk
 
@@ -177,17 +206,31 @@ async def view_media(
     else:
         content_type = 'video/mp4'
 
+    # Prepare headers for response
+    response_headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Accept-Ranges",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length"
+    }
+
+    # Add Content-Length and Content-Range for proper seeking
+    if file_size > 0:
+        response_headers["Content-Length"] = str(end - start + 1)
+        if range_header:
+            response_headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
+    # Return 206 Partial Content for Range requests
+    status_code = 206 if range_header and file_size > 0 else 200
+
     return StreamingResponse(
-        stream(), 
+        stream_with_range(), 
+        status_code=status_code,
         media_type=content_type,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=3600",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Range, Content-Type"
-        }
+        headers=response_headers
     )
 
 @app.get("/info")
