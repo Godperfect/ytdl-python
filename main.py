@@ -104,13 +104,13 @@ async def download_media(
         }
     )
 
-@app.get("/stream")
-async def stream_media(
+@app.get("/view")
+async def view_media(
     url: str = Query(...),
     media_type: str = Query("video"),
     quality: str = Query("medium")
 ):
-    """Stream media directly for playback in your Next.js app"""
+    """Get media URL for viewing directly in your Next.js app"""
     # Same format selection as download but optimized for streaming
     if media_type == 'audio':
         if quality == 'high':
@@ -142,9 +142,9 @@ async def stream_media(
     if not result or 'url' not in result:
         raise HTTPException(status_code=404, detail="Video URL not found")
 
-    # Return the direct stream URL for your Next.js app to use
+    # Return the direct view URL for your Next.js app to use
     return {
-        "stream_url": result['url'],
+        "view_url": result['url'],
         "title": result.get('title', 'Unknown'),
         "duration": result.get('duration', 0),
         "thumbnail": result.get('thumbnail', ''),
@@ -181,17 +181,17 @@ def root():
     return {
         "message": "Ultra-Fast YouTube Streaming API for Next.js",
         "endpoints": [
-            "/stream?url=<youtube_url>&media_type=video|audio&quality=low|medium|high - Get direct stream URL",
+            "/view?url=<youtube_url>&media_type=video|audio&quality=low|medium|high - Get direct view URL",
             "/download?url=<youtube_url>&media_type=video|audio&quality=low|medium|high - Download file",
             "/info?url=<youtube_url> - Get video metadata quickly"
         ],
         "performance_tips": [
-            "Use /stream for direct playback in your Next.js app",
-            "Use quality=low for fastest streaming",
-            "Use /info endpoint to get metadata before streaming"
+            "Use /view for direct playback in your Next.js app",
+            "Use quality=low for fastest viewing",
+            "Use /info endpoint to get metadata before viewing"
         ],
         "examples": [
-            "/stream?url=https://youtu.be/example&media_type=video&quality=medium",
+            "/view?url=https://youtu.be/example&media_type=video&quality=medium",
             "/info?url=https://youtu.be/example",
             "/download?url=https://youtu.be/example&media_type=audio&quality=low"
         ]
