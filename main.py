@@ -1,143 +1,76 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from yt_dlp import YoutubeDL
-import os
-import tempfile
+import io
+import requests
 import random
-import time
-from fake_useragent import UserAgent
-import shutil
 
 app = FastAPI()
 
-def get_bypass_config():
-    """Get configuration with multiple bypass techniques"""
-    ua = UserAgent()
+# SOCKS5 proxy configuration
+PROXY_CONFIG = {
+    'protocol': 'socks5',
+    'port': 1080,
+    'username': 'PKksJImNm9m',
+    'password': '1dL56jWydrO',
+    'hosts': [
+        'mel.socks.ipvanish.com',  # Australia
+        'tor.socks.ipvanish.com',  # Canada
+        'lin.socks.ipvanish.com',  # Italy
+        'ams.socks.ipvanish.com',  # Netherlands
+        'waw.socks.ipvanish.com',  # Poland
+        'sin.socks.ipvanish.com',  # Singapore
+        'mad.socks.ipvanish.com',  # Spain
+        'lon.socks.ipvanish.com',  # UK
+    ]
+}
 
-    return {
-        'user_agent': ua.random,
-        'delay': random.uniform(0.5, 2)
-    }
-
-def download_and_stream(url, media_type):
-    """Download media using yt-dlp and stream it"""
-    config = get_bypass_config()
-    time.sleep(config['delay'])
-
-    temp_dir = tempfile.mkdtemp()
-
-    try:
-        # Configure yt-dlp options for reliable downloads
-        ydl_opts = {
-            'format': 'bestaudio[ext=m4a]/bestaudio/best' if media_type == 'audio' else 'best[height<=720]/best',
-            'noplaylist': True,
-            'quiet': True,
-            'no_warnings': True,
-            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-            'restrictfilenames': True,
-            'no_check_certificate': True,
-            'geo_bypass': True,
-            'http_headers': {
-                'User-Agent': config['user_agent'],
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-            },
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios', 'web'],
-                    'skip': ['dash', 'hls']
-                }
-            },
-        }
-
-        # Add audio-specific post-processing
-        if media_type == 'audio':
-            ydl_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
-
-        with YoutubeDL(ydl_opts) as ydl:
-            # Extract info first
-            info = ydl.extract_info(url, download=False)
-            title = info.get('title', 'Unknown')
-            duration = info.get('duration', 0)
-
-            # Download the media
-            ydl.download([url])
-
-            # Find the downloaded file
-            downloaded_files = os.listdir(temp_dir)
-            if not downloaded_files:
-                raise Exception("No files were downloaded")
-
-            downloaded_file = os.path.join(temp_dir, downloaded_files[0])
-
-            # Determine content type and filename
-            if media_type == 'audio':
-                content_type = 'audio/mpeg'
-                filename = f"{title}.mp3"
-            else:
-                content_type = 'video/mp4'
-                filename = f"{title}.mp4"
-
-            # Create a streaming generator
-            def file_streamer():
-                try:
-                    with open(downloaded_file, 'rb') as f:
-                        while True:
-                            chunk = f.read(8192)
-                            if not chunk:
-                                break
-                            yield chunk
-                finally:
-                    # Clean up temporary files
-                    try:
-                        shutil.rmtree(temp_dir)
-                    except:
-                        pass
-
-            return {
-                'generator': file_streamer(),
-                'content_type': content_type,
-                'filename': filename,
-                'title': title,
-                'duration': duration
-            }
-
-    except Exception as e:
-        # Clean up on error
-        try:
-            shutil.rmtree(temp_dir)
-        except:
-            pass
-        raise Exception(f"Download failed: {str(e)}")
+def get_random_proxy():
+    """Get a random proxy from the available hosts"""
+    host = random.choice(PROXY_CONFIG['hosts'])
+    return f"socks5://{PROXY_CONFIG['username']}:{PROXY_CONFIG['password']}@{host}:{PROXY_CONFIG['port']}"
 
 @app.get("/download")
 def download_media(
     url: str = Query(...),
     media_type: str = Query("video")
 ):
-    try:
-        # Download and get stream info
-        stream_info = download_and_stream(url, media_type)
+    proxy_url = get_random_proxy()
 
-        # Return streaming response for download
-        return StreamingResponse(
-            stream_info['generator'],
-            media_type=stream_info['content_type'],
-            headers={
-                "Content-Disposition": f"attachment; filename=\"{stream_info['filename']}\"",
-                "Cache-Control": "no-cache"
-            }
-        )
+    ydl_opts = {
+        'format': 'bestaudio/best' if media_type == 'audio' else 'best',
+        'noplaylist': True,
+        'quiet': True,
+        'outtmpl': '-',
+        'no_warnings': True,
+        'extract_flat': False,
+        'force_generic_extractor': False,
+        'simulate': False,
+        'restrictfilenames': True,
+        'logtostderr': False,
+        'cachedir': False,
+        'proxy': proxy_url,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }] if media_type == 'audio' else [],
+    }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    def stream():
+        with YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(url, download=False)
+            if 'url' in result:
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+                r = requests.get(result['url'], stream=True, proxies=proxies)
+                for chunk in r.iter_content(chunk_size=8192):
+                    yield chunk
+
+    content_type = 'audio/mpeg' if media_type == 'audio' else 'video/mp4'
+    return StreamingResponse(stream(), media_type=content_type)
 
 @app.get("/stream")
 def stream_media(
@@ -145,66 +78,74 @@ def stream_media(
     media_type: str = Query("video")
 ):
     """Stream media directly without download headers"""
-    try:
-        # Download and get stream info
-        stream_info = download_and_stream(url, media_type)
+    proxy_url = get_random_proxy()
 
-        # Return streaming response for direct playback
-        return StreamingResponse(
-            stream_info['generator'],
-            media_type=stream_info['content_type'],
-            headers={
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "no-cache"
-            }
-        )
+    ydl_opts = {
+        'format': 'bestaudio/best' if media_type == 'audio' else 'best',
+        'noplaylist': True,
+        'quiet': True,
+        'outtmpl': '-',
+        'no_warnings': True,
+        'extract_flat': False,
+        'force_generic_extractor': False,
+        'simulate': False,
+        'restrictfilenames': True,
+        'logtostderr': False,
+        'cachedir': False,
+        'proxy': proxy_url,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }] if media_type == 'audio' else [],
+    }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    def stream():
+        with YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(url, download=False)
+            if 'url' in result:
+                proxies = {
+                    'http': proxy_url,
+                    'https': proxy_url
+                }
+                r = requests.get(result['url'], stream=True, proxies=proxies)
+                for chunk in r.iter_content(chunk_size=8192):
+                    yield chunk
+
+    content_type = 'audio/mpeg' if media_type == 'audio' else 'video/mp4'
+    return StreamingResponse(
+        stream(), 
+        media_type=content_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-cache"
+        }
+    )
 
 @app.get("/info")
 def get_media_info(url: str = Query(...)):
     """Get media information without downloading"""
-    config = get_bypass_config()
-    time.sleep(config['delay'])
+    proxy_url = get_random_proxy()
 
-    try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': config['user_agent'],
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            },
-            'geo_bypass': True,
-            'no_check_certificate': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                }
-            },
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'proxy': proxy_url,
+    }
+
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+        return {
+            "title": info.get('title', 'Unknown'),
+            "duration": info.get('duration', 0),
+            "uploader": info.get('uploader', 'Unknown'),
+            "description": info.get('description', ''),
+            "view_count": info.get('view_count', 0),
+            "upload_date": info.get('upload_date', ''),
+            "thumbnail": info.get('thumbnail', ''),
+            "formats_available": len(info.get('formats', []))
         }
-
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-            return {
-                "title": info.get('title', 'Unknown'),
-                "duration": info.get('duration', 0),
-                "uploader": info.get('uploader', 'Unknown'),
-                "description": info.get('description', ''),
-                "view_count": info.get('view_count', 0),
-                "upload_date": info.get('upload_date', ''),
-                "thumbnail": info.get('thumbnail', ''),
-                "formats_available": len(info.get('formats', []))
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error extracting info: {str(e)}")
 
 @app.get("/")
 def root():
